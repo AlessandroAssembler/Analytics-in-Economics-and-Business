@@ -1,0 +1,590 @@
+---
+title: "Regression Trees, Random Forest, Boosting - Computer.csv"
+author: "Alessandro Lo Verde"
+date: "11-09-2023"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    fig_width: 9
+    fig_height: 7
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: inline
+  output: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduzione 
+
+Il presente lavoro si basa sull'analisi contenuta nel capitolo 8 del libro di Tbishirani "Introduction to Statistical Learning (with Applications in R)" [1].
+
+Il dataset preso in considerazione per l'analisi è tratto dal paper di Stengos e Zacharias [2] e contiene prezzo, mese di listing e specifiche tecniche di alcuni pc osservati tra il 1993 e il 1995.
+
+L'obiettivo è quello di stimare il prezzo dei computer attraverso dei modelli di regressione ad albero, cercando di capire se le tecniche di pruning, bagging, random forest e boosting possano aiutare a migliorare il risultato delle predizioni effettuate sul test set.
+
+## 1 -- Lettura File 
+
+Il dataset prescelto è "Computers.csv", che contiene dati su un campione di 6259 prezzi di computer di 486 diversi modelli osservati ogni mese negli US (rivista PC Magazine) tra il 1993 e il 1995. 
+
+Le 10 aziende produttrici presenti sono: ACER, AUSTIN, COMPAQ, COMTRADE, DELL, GATEWAY 2000, IBM, MICRON, MIDWES MICRO e ZEOS, in quanto sono i prodotti più frequentemente pubblicizzati dell'epoca.
+
+La variabile indipendente di ogni modello implementato sarà:
+
+- price: prezzo in dollari dei 486 PC
+
+Le variabili esplicative sono:
+
+- speed: velocità di clock in MHz
+
+- hd (Hard Disk): dimensione del disco rigido in MB
+
+- ram: dimensione della Ram in MB
+
+- schermo: dimensione dello schermo in pollici
+
+- cd: presenza o meno di u lettore CD-ROM?
+
+- multi: Presenza o meno di un kit multimediale (altoparlanti, scheda audio)?
+
+- premium: il produttore è un'azienda considerata "premium" (IBM, COMPAQ) o meno 
+
+- ads: numero di pubblicazioni dei prezzi osservate in ogni mese
+
+- trend: numero intero crescente che indica il mese a partire da gennaio 1993 fino a novembre 1995 (totale 35 mesi).
+
+```{r Libraries, message=FALSE,echo=TRUE}
+library(Matching)
+library(arm)
+library(fastDummies) # gestione dummies
+library(ISLR)
+library(Hmisc) # rcorr
+library(sjPlot) # plot intervalli di confidenza
+library(tree)
+library(MASS)
+library(randomForest)
+library(gbm) # boosting
+```
+
+```{r Lettura File, echo=TRUE}
+
+# Si imposta la directory di lavoro e si legge il file
+setwd("/Users/alessandroloverde/Library/Mobile Documents/com~apple~CloudDocs/Master Statistical Learning e Data Science/Analytics in business and economics/Progetto Analytics in business and economics") 
+dataset = read.csv("Computers.csv", header = TRUE) 
+
+# Si salvano le variabili di interesse come covariate (variabili esplicative) e variabili risposta
+co <- c("speed", "hd", "ram","screen","cd", "multi", "premium", "ads","trend")
+vr <- c("price")  
+
+# Si crea data, il Dataset preso in considerazione per l'analisi
+data <- dataset[, c(vr, co)] 
+
+# Gestione variabili Dummies
+
+data <- dummy_cols(data, select_columns = c("cd","multi","premium"))
+
+data$cd <- NULL
+data$multi <- NULL
+data$premium <- NULL
+data$cd_no <- NULL
+data$multi_no <- NULL
+data$premium_no <- NULL
+
+head(data) 
+#summary(data)
+res <- rcorr(as.matrix(data))
+#res$r
+
+```
+
+## 2 -- Modello di regressione lineare completo
+
+Per questi dati, un modello di regressione lineare semplice che include tutte le variabili esplicative, potrebbe non essere in grado di catturare eventuali relazioni non lineari tra prezzo ed esplicative, come osservano nel loro paper di Stengos e Zacharias [2]. 
+Gli autori stessi nel loro paper applicano un modello semiparametrico più complesso, sottolineando i limiti di un regressione lineare semplice per analizzare questo dataset.
+
+Il modello di regressione lineare semplice allenato su un training set e testato su un test set, mostra che tutte le variabili prese in considerazione risultano essere utili nel prevedere il prezzo listato dei pc. I coefficienti beta della regressione risultano tutti significativi statisticamente. Il modello sembra dunque ben specificato nella scelta delle sue variabili e l'RMSE (Root Mean Squared Error) risulta essere intorno ai 270$. Si tiene da parte questo valore e lo si utilizzerà come benchmark per valutare la bontà di previsione di questo modello rispetto agli altri.
+
+E' possibile migliorare il risultato della regressione prendendo in considerazione variabili di interazione, logaritmi o potenze delle variabili, regolarizzazioni (es. Lasso...) ma ci limiteremo ad analizzare nelle prossime sezioni le regressioni ad albero e le tecniche utili a migliorarne le capacità di stima.
+
+```{r Regressione Lineare, echo=TRUE}
+
+# Evaluation of the model on a test set
+
+set.seed(1)
+n <- 1:nrow(data) # Numero totale di righe del dataset
+
+# Specifica la proporzione desiderata (training:test)
+proportion <- 0.75
+
+# Calcola il numero di osservazioni per l'addestramento e il test
+train_size <- round(length(n) * proportion)
+test_size <- length(n) - train_size
+
+# Crea un vettore di indici casuali
+random_indices <- sample(length(n))
+
+# Esegue la divisione dei dati
+ntrain <- n[random_indices[1:train_size]]
+ntest <- n[random_indices[(train_size + 1):(train_size + test_size)]]
+
+# Crea il dataset di training con la dimensione specificata
+dtrain <- data[ntrain, ] 
+dtrain.vr <- data[ntrain,vr]
+dtrain.co <- data[ntrain,2:10]
+
+# Crea il dataset di test con la dimensione specificata
+dval <- data[ntest, ] 
+dtest.vr <- data[ntest,vr]
+dtest.co <- data[ntest,2:10]
+
+# Modello completo di regressione lineare
+complete_model <- lm(dtrain.vr ~ . , data = dtrain.co)
+
+summary(complete_model)
+
+# Confidence Interval
+simD1 <- sim(complete_model)
+simD1.coef <- coef(simD1)
+  
+# Intervalli di confidenza simulati
+simD1.coef.df <- as.data.frame(simD1.coef)
+simulationsConfidencesD1<-data.frame(quantile(simD1.coef.df$`(Intercept)` , probs=c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`speed` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`hd` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`ram` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`screen` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`cd_yes` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`multi_yes` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`premium_yes` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`ads` , c(0.025, 0.975)),
+                                     quantile(simD1.coef.df$`trend` , c(0.025, 0.975))
+                                     )
+
+colnames(simulationsConfidencesD1) <- c("(Intercept)","speed", "hd", "ram","screen","cd", "multi", "premium", "ads","trend")
+#simulationsConfidencesD1
+
+# Plot intervalli di confidenza
+plot_model(complete_model, show.loess.ci = T, show.values = T, show.summary = T, title ="Intervalli di confidenza per i beta stimati nel modello semplice completo di regressione lineare")
+
+# Previsioni in base al modello sul test set (Regressione Lineare)
+preds <- predict(complete_model, newdata = dtest.co)
+
+# Calcolo del valore di MSE e RMSE (Regressione Lineare)
+MSE <- mean((preds - dtest.vr)^2)
+RMSE <- sqrt(MSE)
+
+# Tabella con i risultati (Regressione Lineare)
+results_table <- matrix(c(MSE, RMSE), nrow = 2, ncol = 1)
+rownames(results_table) <- c('MSE', 'RMSE')
+colnames(results_table) <- 'Regressione Lineare'
+results_table
+```
+
+
+## 3 -- Fitting Regression Tree
+
+Di seguito si implementa un modello di regressione ad albero.
+
+L'albero viene fatto crescere mediante partizione ricorsiva binaria.
+Ad ogni step, si sceglie lo split che massimizza la riduzione dell'impurità (RSS - Sum of squared residuals), si divide il set di dati e si ripete il processo. La suddivisione continua finché i nodi terminali non sono troppo piccoli o troppo pochi per essere suddivisi.
+
+L'albero ottimale trovato dall'algoritmo risulta avere 15 nodi terminali, con un RMSE stimato intorno ai 320$. 
+
+Questo errore di stima sul test set risulta essere maggiore rispetto a quello ottenuto col semplice modello di regressione lineare.
+
+E' dunque necessario procedere con l'analisi.
+
+```{r Regression Tree, echo=TRUE}
+
+## Fitting Regression Tree
+
+tree.data=tree(dtrain.vr ~ .,data = dtrain.co)
+#summary(tree.data)
+
+# Plot di un semplice modello di Regressione ad albero
+# dev.new(width=150, height=5, unit="cm")
+plot(tree.data)
+text(tree.data,pretty=0)
+
+# Predizione (Regression Tree)
+
+yhat=predict(tree.data,newdata = dtest.co)
+plot(yhat,dtest.vr, main = "Regression tree - y hat (predicted) vs y (test set)")
+abline(0,1)
+
+# Calcolo valore di MSE (Regression Tree)
+MSE <- mean((yhat - dtest.vr)^2)
+
+# Calcolo valore di RMSE (Regression Tree)
+RMSE <- sqrt(MSE)
+
+# Tabella riassuntiva con i risultati (Regression Tree)
+results_table <- matrix(c(MSE, RMSE), nrow = 2, ncol = 1)
+rownames(results_table) <- c('MSE', 'RMSE')
+colnames(results_table) <- 'Regression Tree'
+results_table
+
+```
+
+## 4 -- Pruning
+
+Per migliorare il modello, si considera l'applicazione del pruning; si cerca dunque di semplificare l'albero, rimuovendo rami meno importanti o nodi terminali che potrebbero causare overfitting. La misura predefinita per guidare la potatura è la devianza espressa come RSS (Sum of Squared Residuals). 
+
+Come primo step, tramite la funzione cv.tree, per ciascuno dei valori possibili dei nodi terminali (da 1 a 15), si calcolano i valori di RSS totali su un set k-fold di cross-validation. 
+
+Successivamente, con la funzione prune.tree si calcola il valore del RMSE sul test set per ciascuno dei valori possibili dei nodi terminali (da 1 a 15). 
+
+Il risultato è che il pruning non sembra ridurre in alcun modo il nostro errore di stima. 
+
+Questa conclusione è supportata sia dall'andamento del RMSE ottenuto dalla cross-validation sul training set che dal RMSE calcolato sul test set per un numero diverso di potenziali nodi terminali massimi.
+Il grafico riportato mostra come il miglior modello è quello con un numero maggiore di nodi terminali (15), poiché presenta il valore minimo di errore Test e CV. 
+
+Un albero più complesso sembra dunque adattarsi meglio ai dati.
+
+```{r Pruning, echo=TRUE}
+
+# Pruning Regression Trees
+cv.data = cv.tree(tree.data, FUN = prune.tree, K = 10)
+
+# Creazione tabella riassuntiva (Pruning)
+deviance.pruning = rev(sqrt(cv.data$dev/(nrow(dtrain.co))))
+
+# Si esegue il pruning su un numero crescente di nodi terminali consentiti al massimo
+
+test.err <- double(14)
+
+for(terminal in 2:15) 
+{
+ prune.data=prune.tree(tree.data,best=terminal)
+
+  # Predizioni sul Test Set  
+  yhat=predict(prune.data,newdata=dtest.co)
+  
+  # Root Mean Square Error - Test Set
+  MSE = mean((yhat-dtest.vr)^2)
+  RMSE = sqrt(MSE)
+  test.err[terminal] = RMSE 
+}
+
+# Creazione tabella riassuntiva (Pruning - best) 
+Error.pruning = matrix(cbind(deviance.pruning[2:15], test.err[2:15]), nrow = 2, ncol=14, byrow=TRUE)
+ 
+# Si assegnano i nomi a righe e colonne (Pruning - best)
+colnames(Error.pruning) = c('2','3','4','5','6','7','8','9','10','11','12','13','14','15')
+rownames(Error.pruning) <- c('cv.err', 'test.err')
+ 
+# Print (Pruning - best) 
+Error.pruning
+
+# Plot CV, test error vs size per vedere il valore ottimale dei nodi terminali dell'albero
+matplot(2:terminal, cbind(deviance.pruning[2:15], test.err[2:15]), pch=19 , col=c("green", "blue"),type="b", ylab="Root Mean Squared Error",xlab="Number of Terminal Nodes", main="RMSE vs Size (Number of Terminal Nodes)")
+legend("topright",legend=c("CV Error","Test Error"), pch=19, col=c("green", "blue"))
+
+```
+
+## 5 -- Bagging e Random Forest
+
+La prima tecnica implementata per migliorare le performance sul test set è il bagging.
+
+L'RMSE ottenuto effettuando Bagging su 150 alberi cresciuti sui rispettivi sample Bootstrapped è di 160$ circa. 
+
+Questo valore è già inferiore rispetto a quello ottenuto con regressione lineare, ma si prova a migliorare il risultato con Random Forest.
+
+Rispetto al bagging, si considera un numero inferiore a quello totale di variabili esplicative (mtry) che è possibile utilizzare ad ogni split; quali variabili verranno utilizzate è il frutto di campionamento casuale effettuato ad ogni split.
+
+Utilizzando Random forest, si nota che l'errore oob e l'errore sul test set mostrano andamenti simili e abbastanza regolari al variare del parametro "mtry"; sia l’errore di Test, sia l’errore OOB, tendono a minimizzarsi per valori di mtry compresi tra 5 e 7 (impostando diversi seed).
+
+Il vantaggio in termini di RMSE rispetto al bagging c'è (lo si evince anche dal grafico al paragrafo 7 di confronto degli RMSE) ma non è così importante.
+
+Nel grafico che rappresenta l'importanza delle variabili, vengono utilizzate due misure di importanza:
+
+- La prima misura si basa sull'errore di predizione calcolato sulla parte di dati out of bag (MSE per la regressione a albero). Le variabili più importanti identificate attraverso questo metodo risultano "Ram", "Speed", "Trend" e "premium_yes".
+
+- La seconda misura si basa sulla diminuzione totale delle impurità (RSS) dei nodi dovuta agli split sulla variabile, calcolata in media su tutti gli alberi. Le variabili più importanti identificate attraverso questo metodo risultano "Ram", "Speed", "Trend" e "HD".
+
+Nota sul numero degli alberi utilizzati: Il grafico che mostra il miglioramento dell'errore di stima commesso dal Random Forest all'aumentare della numerosità degli alberi utilizzati, evidenzia come, superat la soglia dei 150 alberi, il modello non garantisce più un miglioramento sufficiente a giustificare l'aumento della complessità computazionale necessario per implementarlo.
+
+```{r Bagging e Random Forest, echo=TRUE}
+
+### Bagging and Random Forests
+
+## Bagging  
+
+bag.data=randomForest(dtrain.vr ~ . , data = dtrain.co, mtry=9, ntree=150)
+
+# Prediction - performance on the Test Set (Bagging)
+yhat.bag = predict(bag.data, newdata = dtest.co,ntree=150)
+
+# Calcola il valore di MSE (Bagging)
+MSE <- mean((yhat.bag - dtest.vr)^2)
+
+# Calcola il valore di RMSE (Bagging)
+RMSE <- sqrt(MSE)
+
+# Crea una tabella con i risultati (Bagging)
+results_table <- matrix(c(MSE, RMSE), nrow = 2, ncol = 1)
+rownames(results_table) <- c('MSE', 'RMSE')
+colnames(results_table) <- 'Bagging (9 Variabili)'
+
+# Visualizza la tabella dei risultati (Bagging)
+print(results_table)
+
+## Si prova il modello Random forest con diversi mtry (numero di variabili campionate casualmente come candidate ad ogni split)
+
+oob.err <- double(9)
+test.err <- double(9)
+
+for(mtry in 1:9) 
+{
+ rf.data=randomForest(dtrain.vr ~ . , data = dtrain.co, mtry=mtry,ntree=150,importance=TRUE)
+ 
+  # Errore medio Out of Bag su tutti gli alberi fittati
+  oob.err[mtry] = sqrt(mean(rf.data$mse))
+  
+  # Predizioni sul Test Set ( Mean Square Error - Test Set)
+  yhat=predict(rf.data, newdata = dtest.co,ntree=150) 
+  MSE = mean((yhat- dtest.vr)^2)
+  RMSE = sqrt(MSE)
+  test.err[mtry] = RMSE #Error of all Trees fitted
+
+}
+
+# Creazione tabella riassuntiva (Random Forest - n mtry)
+Error.rf = matrix(c(oob.err,test.err), nrow = 2, ncol=9, byrow=TRUE)
+ 
+# Si assegnano i nomi a righe e colonne (Random Forest - n mtry)
+colnames(Error.rf) = c('1', '2','3','4','5','6','7','8','9')
+rownames(Error.rf) <- c('oob.err','test.err') 
+ 
+# Print (Random Forest - n mtry)
+Error.rf
+
+# Trova il minimo della prima riga (oob.err) e il suo numero di colonna (Random Forest - n mtry)
+min_oob_err <- min(Error.rf['oob.err', ])
+col_num_min_oob <- which(Error.rf['oob.err', ] == min_oob_err)
+
+# Trova il minimo della seconda riga (test.err) e il suo numero di colonna (Random Forest - n mtry)
+min_test_err <- min(Error.rf['test.err', ])
+col_num_min_test <- which(Error.rf['test.err', ] == min_test_err)
+
+# Crea una nuova tabella con i minimi e i loro numeri di colonna(Random Forest - n mtry)
+min_table <- matrix(c(min_oob_err, min_test_err, col_num_min_oob, col_num_min_test), nrow = 2, ncol = 2)
+rownames(min_table) <- c('oob.err','test.err') 
+colnames(min_table) <- c('error', '# Variabili')
+
+# Visualizza la nuova tabella dei minimi errori(Random Forest - n mtry)
+print(min_table)
+
+# Plot test error and OOB error (Random Forest - n mtry)
+matplot(1:mtry , cbind(oob.err,test.err), pch=19 , col=c("red","blue"),type="b",
+        ylab="Root Mean Squared Error",xlab="Number of Predictors Considered at each Split", main= "Confronto RMSE CV e Test su Random Forest al variare di mtry ")
+legend("topright",legend=c("Out of Bag Error","Test Error"),pch=19, col=c("red","blue"))
+
+
+## Random Forest - performance on the Test Set (6 Variables)
+
+rf.data=randomForest(dtrain.vr ~ . , data = dtrain.co, mtry=6, ntree=150,importance=TRUE)
+
+# Plot dell'errore all'aumentare del numero di alberi
+
+rf.data200=randomForest(dtrain.vr ~ . , data = dtrain.co, mtry=6, ntree=200,importance=TRUE)
+plot(rf.data200, main = "RMSE Random Forest (6 Variables) al variare del numero di alberi")
+
+# Plot Importanza variabili (Random Forest)
+#importance(rf.data)
+varImpPlot(rf.data, main = "Random Forest (6 Variables) - Importance")
+
+# Plot delle predizioni dei prezzi dei computer contro i prezzi osservati (Random Forest)
+yhat.rf = predict(rf.data, newdata = dtest.co,ntree=150)
+plot(yhat.rf, dtest.vr, main = "Random Forest (6 Variables) - y hat (predicted) vs y (test set)")
+abline(0,1)
+
+# Calcola il valore di MSE (Random Forest)
+MSE <- mean((yhat.rf - dtest.vr)^2)
+
+# Calcola il valore di RMSE (Random Forest)
+RMSE <- sqrt(MSE)
+
+# Crea una tabella con i risultati (Random Forest)
+results_table <- matrix(c(MSE, RMSE), nrow = 2, ncol = 1)
+rownames(results_table) <- c('MSE', 'RMSE')
+colnames(results_table) <- 'Random Forest (6 Variabili)'
+
+# Visualizza la tabella dei risultati (Random Forest)
+results_table
+
+```
+
+## 6 -- Boosting
+
+Tramite boosting si cerca di fare previsioni combinando una sequenza di modelli di regressione ad albero di base.
+
+Per eseguire il Boosting viene utilizzata la funzione "gbm", in cui si specifica: 
+- Il parametro interaction depth = 5 indica il numero di suddivisioni da eseguire su ogni albero (a partire da un singolo nodo).
+- Il parametro n.trees=500 è il numero intero che specifica il numero totale di alberi da inserire.
+
+Nella prima parte si esegue un ciclo for per far girare il modello per valori crescenti (da 0.1 a 1) del parametro "Shrinkage" (o "Learning Rate") per valutare l'impatto sulle prestazioni del modello di questo parametro e trovare il setting adeguato.
+La radice dell'errore quadratico medio (RMSE) sul test set viene preso come misura delle prestazioni.
+Il risultato è che solitamente bisogna prendere un parametro di shrinkage compreso tra 0.2 e 0.4 (impostando diversi seed).
+
+Si procede dunque ad addestrare il modello di Boosting ottimale (n.tree = 500, interaction.depth = 5, shrinkage = 0.3).
+
+Il RMSE finale di test si assesta intorno ai 150$, inferiore agli errori generati dai modelli precedenti.
+
+Dal grafico di importanza (influenza relativa) delle variabili, si nota che  "Ram", "Speed", "HD" e "Trend" rimangono le variabili più importanti.
+L'approccio seguito in gbm per valutare l'importanza delle variabili è esattamente quello implementato da Friedman (2001) [3] ed è basato sulla media tra i vari alberi della somma totale dell'errore quadratico calcolato per ogni predittore. Tale misura viene standardizzata in modo tale che la somma sia pari a 100.
+
+Nota sul numero degli alberi utilizzati: Come si vedrà nell'ultima sezione, se si utilizzano più di 200-300 alberi nel boosting, si riesce a migliorare consistentemente i risultati rispetto a Random forest, dunque i 500 utilizzati di seguito risultano essere sufficienti per avere un risultato migliore (dopo circa 1000 alberi, l'aumento del numero di alberi utilizzati porta ad un miglioramento nell'errore stimato talmente piccolo da non giustificare l'aumento della complessità computazionale necessario).
+
+```{r Boosting, message = FALSE, echo=TRUE}
+
+### Boosting
+
+## Si prova il modello Boosting con diversi valori dello Shrinkage parameter 
+
+test.err <- double(10)
+
+for(shrinkage in 1:10) 
+{
+boost.data=gbm(dtrain.vr ~ . , data = dtrain.co, distribution="gaussian",n.trees=500, interaction.depth=5, shrinkage=shrinkage/10)
+  
+  # Predizioni sul Test Set ( Mean Square Error - Test Set)
+  yhat=predict(boost.data, newdata = dtest.co, n.trees=500) 
+  MSE = mean((yhat- dtest.vr)^2)
+  RMSE = sqrt(MSE)
+  test.err[shrinkage] = RMSE #Error of all Trees fitted
+}
+
+# Creazione tabella riassuntiva (Boosting - shrinkage)
+Error.bag = matrix(test.err, nrow = 1, ncol=10, byrow=TRUE)
+ 
+# Si assegnano i nomi a righe e colonne (Boosting - shrinkage)
+colnames(Error.bag) = c('0.1','0.2','0.3','0.4','0.5','0.6','0.7','0.8','0.9','0.10')
+rownames(Error.bag) <- 'test.err'
+ 
+# Print (Boosting - shrinkage)
+Error.bag
+
+# Plot test error and OOB error (Boosting - 1/n shrinkage)
+matplot((1:10)/10 , test.err, pch=19 , col="blue",type="b",
+        ylab="Root Mean Squared Error",xlab="Shrinkage parameter", main = "Boosting - RMSE al variare dello Shrinkage parameter")
+legend("topright",legend="Test Error",pch=19, col="blue")
+
+# Trova il minimo della seconda riga (test.err) e il suo numero di colonna (Boosting - shrinkage)
+min_test_err <- min(Error.bag['test.err', ])
+col_num_min_test <- which(Error.bag['test.err', ] == min_test_err)
+
+# Crea una nuova tabella con i minimi e i loro numeri di colonna (Boosting - shrinkage)
+min_table <- matrix(c(min_test_err, col_num_min_test/10), nrow = 1, ncol = 2)
+rownames(min_table) <- 'test.err' 
+colnames(min_table) <- c('error', 'Shrinkage')
+
+# Visualizza la nuova tabella dei minimi errori (Boosting - shrinkage)
+print(min_table)
+
+
+# Regression tree with Boosting (n.trees = 1500, Shrinkage = 0.3 , interaction.depth = 5)
+boost.data=gbm(dtrain.vr ~ . , data = dtrain.co, distribution="gaussian",n.trees=500,interaction.depth=5, shrinkage=0.3)
+
+summary(boost.data)
+
+# Prediction with boosting
+yhat.boost=predict(boost.data, newdata = dtest.co, n.trees=500)
+
+# Plot delle predizioni dei prezzi dei computer contro i prezzi osservati (Boosting)
+plot(yhat.boost, dtest.vr, main = "Boosting - y hat (predicted) vs y (test set)")
+abline(0,1)
+
+# Calcola il valore di MSE (Random Forest)
+MSE <- mean((yhat.boost - dtest.vr)^2)
+
+# Calcola il valore di RMSE (Random Forest)
+RMSE <- sqrt(MSE)
+
+# Crea una tabella con i risultati (Random Forest)
+results_table <- matrix(c(MSE, RMSE), nrow = 2, ncol = 1)
+rownames(results_table) <- c('MSE', 'RMSE')
+colnames(results_table) <- 'Boosting (500 trees, shrinkage*=0.3)'
+
+# Visualizza la tabella dei risultati (Random Forest)
+results_table
+
+```
+
+## 7 -- Conclusioni: Confronto tra i metodi
+
+Confrontando i vari metodi si nota che:
+
+- Il modello di regressione lineare semplice risulta superiore al modelo di regressione ad albero semplice, ma inferiore a Bagging, Random Forest e Boosting.
+- Il pruning per questo problema non risulta efficace (si seleziona l'albero più complesso con 15 nodi terminali).
+- Per un numero diverso di alberi simulati, il metodo Random Forest con 5-7 variabili risulta sempre legermente superiore al bagging (9 variabili) sia in termini di RMSE calcolato sul test set che di OOB error.
+- Come già osservato nella sezione 5, il modello Random Forest migliora al crescere del numero di alberi simulati fino a 150/200 alberi; dopo tale soglia i miglioramenti sono molto piccoli e non giustificano il costo computazionale aggiuntivo richiesto.
+- Facendo varie simulazioni con diversi seed, il Boosting si dimostra generalmente inferiore al Random Forest fino ai 200-300 alberi simulati.
+- Superata tale soglia, l'RMSE stimato sul test set dal boosting continua a diminuire, mentre, come detto, per il RF l'RMSE rimane "steady" e non migliora ulteriormente; il metodo boosting con n.trees > 300, interaction.depth = 5 e shrinkage compreso tra 0.2 e 0.4 si dimostra dunque consistenemente il metodo migliore per stimare il prezzo dei PC.
+
+Dato che la tecnologia e il costo relativo delle componenti è probabilmente cambiato nel tempo, ci si attende che tale modello performi sufficientemente bene su modelli di PC relativi a qell'epoca (1993-1995). 
+
+Per aggiornare l'analisi, si rende necessario aggiornare il database con dati sui modelli di PC più recenti.
+
+```{r Confronto, echo=TRUE}
+
+# Plot della performance di Bagging vs Random forest vs Boosting
+test.err.bag <- double(5)
+test.err.rf <- double(5)
+test.err.boost <- double(5)
+
+oob.err.bag <- double(5)
+oob.err.rf <- double(5)
+
+for(tree in 1:5) 
+{
+ bag.data=randomForest(dtrain.vr ~ . , data = dtrain.co, mtry=9,ntree=tree*100,importance=TRUE)
+ 
+  # Errore medio Out of Bag su tutti gli alberi fittati
+  oob.err.bag[tree] = sqrt(mean(bag.data$mse))
+  
+  # Predizioni sul Test Set ( Mean Square Error - Test Set)
+  yhat=predict(bag.data, newdata = dtest.co,ntree=tree*100) 
+  MSE = mean((yhat- dtest.vr)^2)
+  RMSE = sqrt(MSE)
+  test.err.bag[tree] = RMSE #Error of all Trees fitted
+  
+ rf.data=randomForest(dtrain.vr ~ . , data = dtrain.co, mtry=6,ntree=tree*100,importance=TRUE)
+ 
+  # Errore medio Out of Bag su tutti gli alberi fittati
+  oob.err.rf[tree] = sqrt(mean(rf.data$mse))
+  
+  # Predizioni sul Test Set ( Mean Square Error - Test Set)
+  yhat=predict(rf.data, newdata = dtest.co,ntree=tree*100) 
+  MSE = mean((yhat- dtest.vr)^2)
+  RMSE = sqrt(MSE)
+  test.err.rf[tree] = RMSE #Error of all Trees fitted
+  
+ boost.data=gbm(dtrain.vr ~ . , data = dtrain.co, distribution="gaussian",n.trees=tree*100,interaction.depth=5,shrinkage=1/4)
+  
+  # Predizioni sul Test Set ( Mean Square Error - Test Set)
+  yhat=predict(boost.data, newdata = dtest.co, n.trees=tree*100) 
+  MSE = mean((yhat- dtest.vr)^2)
+  RMSE = sqrt(MSE)
+  test.err.boost[tree] = RMSE #Error of all Trees fitted
+}
+
+
+# Plot test error and OOB error (Random Forest - n mtry)
+matplot((1:tree)*100, cbind(oob.err.bag,test.err.bag,oob.err.rf,test.err.rf, test.err.boost), pch=19 , col=c("red","orange", "blue", "violet", "green" ),type="b",
+        ylab="Root Mean Squared Error",xlab="Number of Trees", main= "Confronto RMSE tra Bagging, Random Forest e Boosting")
+legend("topright",legend=c("OOB Error(BAG)","Test Error(BAG)","OOB Error(RF)","Test Error(RF)","Test Error(BOOST)"),pch=19, col=c("red","orange", "blue", "violet", "green" ),  cex = 0.5)
+
+```
+  
+## Bibliografia
+
+1 G. James, D. Witten, T. Hastie, R. Tibshirani. Introduction to Statistical Learning (with Applications in R), 2nd edition. Aug., 2021, Ch. 8.
+
+2 T. Stengos and E. Zacharias. Intertemporal Pricing and Price Discrimination: A Semiparametric Hedonic Analysis of the Personal Computer Market. Journal of Applied Econometrics (Wiley) , Apr., 2006, Vol. 21, No. 3, pp. 371-386
+
+3 J. H. Friedman. Greedy Function Approximation: A Gradient Boosting Machine. The Annals of Statistics, 2001, Vol. 29, No. 5, pagine 1189-1232
