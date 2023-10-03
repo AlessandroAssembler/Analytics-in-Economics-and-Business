@@ -1,6 +1,6 @@
 # R-Bagging-Boosting-RandomForest-Computer1995-Dataset
 
-This paper is based on the analysis contained in Chapter 8 of Tbishirani's book "Introduction to Statistical Learning (with Applications in R)" [1].
+This work is based on the analysis contained in Chapter 8 of Tbishirani's book "Introduction to Statistical Learning (with Applications in R)" [1].
 
 The dataset considered for the analysis is taken from the paper by Stengos and Zacharias [2] and contains price, listing month and technical specifications 
 of a number of PCs observed between 1993 and 1995.
