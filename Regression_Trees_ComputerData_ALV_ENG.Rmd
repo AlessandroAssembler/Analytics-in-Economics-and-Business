@@ -93,7 +93,7 @@ library(gbm) # Gradient boosting
 ```{r Dataset, echo=TRUE}
 
 # Set the working directory and read the file
-setwd("/Users/alessandroloverde/Desktop/Github/R-Regression_Trees-Bagging-Boosting-Random_Forest-Computer1995-Stengos-Zacharias")
+setwd("/Users/alessandroloverde/Desktop/Github/R-RegressionTrees-Bagging-Boosting-RandomForest-Computer1995-Stengos-Zacharias")
 dataset = read.csv("Computers.csv", header = TRUE)
 
 # Save the variables of interest as covariates (explanatory variables) and response variables
